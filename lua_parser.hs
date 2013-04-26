@@ -39,6 +39,8 @@ data LuaType = Nil
              | Thread
              | Table [TableElem]
              | LuaVar String
+             | UnOp String LuaType
+             | BinOp String LuaType LuaType
     deriving (Show)
 
 
@@ -66,7 +68,6 @@ lexer :: TokenParser ()
 lexer = makeTokenParser def
 
 
-
 TokenParser{ symbol = m_symbol
            , parens = m_parens
            , identifier = m_identifier
@@ -81,18 +82,27 @@ TokenParser{ symbol = m_symbol
 
 
 parseExpr :: Parser LuaType
-parseExpr = liftM LuaVar m_identifier
-        <|> (m_naturalOrFloat >> return Number)
-        <|> (m_stringLiteral >> return String)
-        <|> ((try (m_symbol "true") <|> try (m_symbol "false")) >> return Bool)
-        <|> (try (m_symbol "nil") >> return Nil)
-        -- function call here
-        -- operators here
+parseExpr  = buildExpressionParser table term <?> "expression"
+
+
+table = [ [Prefix (m_reservedOp "~" >> return (UnOp "~"))]
+        , [Infix (m_reserved "and" >> return (BinOp "and")) AssocLeft]
+        , [Infix (m_reserved "or" >> return (BinOp "or")) AssocLeft]
+        ]
+term = m_parens parseExpr
+       <|> fmap LuaVar m_identifier
+       <|> (m_reserved "true" >> return Bool)
+       <|> (m_reserved "false" >> return Bool)
+       <|> (m_reserved "nil" >> return Nil)
+       <|> (m_naturalOrFloat >> return Number)
+       <|> (m_stringLiteral >> return String)
+       -- function call here
+       -- operators here
 
 
 parseAssign :: Parser Stmt
 parseAssign = (do idents <- m_commaSep1 m_identifier
-                  m_symbol "="
+                  m_reservedOp "="
                   exprs <- m_commaSep1 parseExpr
                   option "" m_semi
                   return $ Assign idents exprs
@@ -100,41 +110,41 @@ parseAssign = (do idents <- m_commaSep1 m_identifier
 
 
 parseIf :: Parser Stmt
-parseIf = (do m_symbol "if"
+parseIf = (do m_reserved "if"
               expr <- parseExpr
-              m_symbol "do"
+              m_reserved "do"
               block <- many parseStmt
               elseifs <- option [] $ many $ try parseElseifs
               el <- option (Block []) $ try parseElse
-              m_symbol "end"
+              m_reserved "end"
               return $ If expr (Block block) elseifs el
           ) <?> "if"
-          where parseElseifs = (do m_symbol "elseif"
+          where parseElseifs = (do m_reserved "elseif"
                                    cond <- parseExpr
-                                   m_symbol "do"
+                                   m_reserved "do"
                                    block <- many parseStmt
                                    return (cond, Block block)
                                ) <?> "elseif"
-                parseElse = (do m_symbol "else"
+                parseElse = (do m_reserved "else"
                                 block <- many parseStmt
                                 return $ Block block
                             ) <?> "else"
 
 
 parseWhile :: Parser Stmt
-parseWhile = (do m_symbol "while"
+parseWhile = (do m_reserved "while"
                  expr <- parseExpr
-                 m_symbol "do"
+                 m_reserved "do"
                  block <- many parseStmt
-                 m_symbol "end"
+                 m_reserved "end"
                  return $ While expr (Block block)
              ) <?> "while"
 
 
 parseBlock :: Parser Stmt
-parseBlock = (do m_symbol "do"
+parseBlock = (do m_reserved "do"
                  block <- many parseStmt
-                 m_symbol "end"
+                 m_reserved "end"
                  return $ Block block
              ) <?> "block"
 

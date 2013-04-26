@@ -1,3 +1,5 @@
+s = a and b or ~c and (5 or 3)
+
 asd = 5
 ident1, ident2 = "asdf", 3, asd
 da, g = nil, ident1
