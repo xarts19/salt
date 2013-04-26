@@ -7,9 +7,16 @@
     Distributed under the Boost Software License, Version 1.0. (See accompanying
     file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 -}
+
+{-
+    TODO:
+    - parse all lua files together to find global names
+    - all names are contained inside this files or come from my C exported functions or standard libs
+    - create a file with exported and standard functions' signatures
+-}
+
 module Main where
 
-import Control.Applicative((<*))
 import Text.Parsec
 import Text.Parsec.String
 import Text.Parsec.Expr
@@ -17,6 +24,7 @@ import Text.Parsec.Token
 import Text.Parsec.Language
 import System.Environment
 import Control.Monad
+
 
 data TableElem = KeyVal LuaType LuaType
                | IdxVal LuaType
@@ -34,7 +42,10 @@ data LuaType = Nil
     deriving (Show)
 
 
-data Stmt = Assign [String] [LuaType]
+data Stmt = Block [Stmt]
+          | Assign [String] [LuaType]
+          | If LuaType Stmt [(LuaType, Stmt)] Stmt
+          | While LuaType Stmt
     deriving (Show)
 
 
@@ -55,6 +66,7 @@ lexer :: TokenParser ()
 lexer = makeTokenParser def
 
 
+
 TokenParser{ symbol = m_symbol
            , parens = m_parens
            , identifier = m_identifier
@@ -69,26 +81,74 @@ TokenParser{ symbol = m_symbol
 
 
 parseExpr :: Parser LuaType
-parseExpr = (m_identifier >>= (return . LuaVar))
+parseExpr = liftM LuaVar m_identifier
         <|> (m_naturalOrFloat >> return Number)
         <|> (m_stringLiteral >> return String)
         <|> ((try (m_symbol "true") <|> try (m_symbol "false")) >> return Bool)
         <|> (try (m_symbol "nil") >> return Nil)
+        -- function call here
+        -- operators here
+
+
+parseAssign :: Parser Stmt
+parseAssign = (do idents <- m_commaSep1 m_identifier
+                  m_symbol "="
+                  exprs <- m_commaSep1 parseExpr
+                  option "" m_semi
+                  return $ Assign idents exprs
+              ) <?> "assign"
+
+
+parseIf :: Parser Stmt
+parseIf = (do m_symbol "if"
+              expr <- parseExpr
+              m_symbol "do"
+              block <- many parseStmt
+              elseifs <- option [] $ many $ try parseElseifs
+              el <- option (Block []) $ try parseElse
+              m_symbol "end"
+              return $ If expr (Block block) elseifs el
+          ) <?> "if"
+          where parseElseifs = (do m_symbol "elseif"
+                                   cond <- parseExpr
+                                   m_symbol "do"
+                                   block <- many parseStmt
+                                   return (cond, Block block)
+                               ) <?> "elseif"
+                parseElse = (do m_symbol "else"
+                                block <- many parseStmt
+                                return $ Block block
+                            ) <?> "else"
+
+
+parseWhile :: Parser Stmt
+parseWhile = (do m_symbol "while"
+                 expr <- parseExpr
+                 m_symbol "do"
+                 block <- many parseStmt
+                 m_symbol "end"
+                 return $ While expr (Block block)
+             ) <?> "while"
+
+
+parseBlock :: Parser Stmt
+parseBlock = (do m_symbol "do"
+                 block <- many parseStmt
+                 m_symbol "end"
+                 return $ Block block
+             ) <?> "block"
 
 
 parseStmt :: Parser Stmt
-parseStmt = do idents <- m_commaSep1 m_identifier
-               m_symbol "="
-               exprs <- m_commaSep1 parseExpr
-               option "" m_semi
-               return $ Assign idents exprs
+parseStmt = try parseIf <|> try parseWhile <|> try parseAssign <|> try parseBlock <?> "statement"
 
 
-parseLua :: Parser [Stmt]
-parseLua = do m_whiteSpace
-              stmts <- many parseStmt
-              eof
-              return stmts
+parseLua :: Parser Stmt
+parseLua = (do m_whiteSpace
+               stmts <- many parseStmt
+               eof
+               return $ Block stmts
+           ) <?> "main"
 
 
 readExpr :: String -> String
@@ -99,7 +159,7 @@ readExpr input = case parse parseLua "lua" input of
 
 main :: IO ()
 main = do
-    args <- getArgs
-    s <- readFile $ head args
-    (putStrLn . readExpr) $ s
+    arguments <- getArgs
+    s <- readFile $ head arguments
+    (putStrLn . readExpr) s
 
